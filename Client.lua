@@ -1,10 +1,10 @@
 -- 🚉 FTN Client: стабильная версия с поддержкой учёта стаков и умной отправкой статуса
 
 -- 🔧 Конфигурация
-local STATION_UUID = "6DF5057A438609F299C0C19FD38CFA64"
+local STATION_UUID = ""
 local stationRole = "requester" -- "provider", "requester", "depo"
 local port = 99
-local priority = 1
+local priority = nil
 local requestAmount = nil
 local resource = "Нефть"
 
