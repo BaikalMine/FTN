@@ -1,10 +1,10 @@
 -- 🚉 FTN Client: стабильная версия с поддержкой учёта стаков и умной отправкой статуса
 
 -- 🔧 Конфигурация
-local STATION_UUID = ""
+local STATION_UUID = "6DF5057A438609F299C0C19FD38CFA64"
 local stationRole = "requester" -- "provider", "requester", "depo"
 local port = 99
-local priority = nil
+local priority = 1
 local requestAmount = nil
 local resource = "Нефть"
 
@@ -17,10 +17,13 @@ event.listen(net)
 local station = component.proxy(STATION_UUID)
 assert(station, "❌ Станция по UUID не найдена")
 
--- ⏱️ Служебные переменные
-local registerTimer, statusTimer, tick = 0, 0, 0
-local cacheLifetime = 5
-local lastInventoryTick = -cacheLifetime
+-- ⏱️ Время и кеш
+local lastRegisterTime = 0
+local lastStatusTime = 0
+local cacheLifetime = 5000
+local lastInventoryTime = -cacheLifetime
+
+-- 📦 Прочие переменные
 local firstRegistered = false
 local cachedPlatforms = nil
 local inventoryCache = {}
@@ -51,9 +54,9 @@ do
 end
 
 -- 📦 Подсчёт количества стаков ресурса с кешированием
-local function countStacks(resourceName)
+local function countStacks(resourceName, now)
 	local totalStacks = 0
-	if tick - lastInventoryTick > cacheLifetime then
+	if now - lastInventoryTime > cacheLifetime then
 		inventoryCache = {}
 		local platforms = getStationPlatforms()
 		for _, platform in ipairs(platforms) do
@@ -81,7 +84,7 @@ local function countStacks(resourceName)
 				totalStacks = totalStacks + count
 			end
 		end
-		lastInventoryTick = tick
+		lastInventoryTime = now
 	else
 		for _, count in pairs(inventoryCache) do
 			totalStacks = totalStacks + count
@@ -91,11 +94,11 @@ local function countStacks(resourceName)
 end
 
 -- 📐 Получаем свободное место
-local function getFree(resourceName)
+local function getFree(resourceName, now)
 	local platforms = getStationPlatforms()
 	local capacityPer = resType == "fluid" and 2400 or 48
 	local totalCapacity = #platforms * capacityPer
-	local currentAmount = countStacks(resourceName)
+	local currentAmount = countStacks(resourceName, now)
 	return totalCapacity - currentAmount, currentAmount
 end
 
@@ -118,7 +121,7 @@ local function register()
 end
 
 -- 📤 Отправка статуса
-local function sendStatus()
+local function sendStatus(now)
 	if stationRole == "depo" then return end
 
 	local id = station.id
@@ -127,16 +130,15 @@ local function sendStatus()
 	local amount, current = 0, 0
 
 	if stationRole == "requester" then
-		local free; free, current = getFree(resourceName)
+		local free; free, current = getFree(resourceName, now)
 		if (priority == nil or priority == 0) and free < trainCap then return end
 		amount = math.floor(free * 100 + 0.5) / 100
 	elseif stationRole == "provider" then
-		current = countStacks(resourceName)
+		current = countStacks(resourceName, now)
 		if (priority == nil or priority == 0) and current < trainCap then return end
 		amount = math.floor(current * 100 + 0.5) / 100
 	end
 
-	-- 🔁 Условия принудительной отправки
 	local forceSend = false
 	if stationRole == "provider" then
 		local prev = lastStatus.amount or 0
@@ -145,7 +147,7 @@ local function sendStatus()
 			forceSend = true
 		end
 	elseif stationRole == "requester" then
-		forceSend = (statusTimer >= 60)
+		forceSend = now - lastStatusTime >= 60000
 	end
 
 	if not forceSend and lastStatus.amount == amount
@@ -199,22 +201,19 @@ end
 register()
 while true do
 	computer.promote()
-	event.pull(1)
-	tick = tick + 1
-	registerTimer = registerTimer + 1
-	statusTimer = statusTimer + 1
+	event.pull(0.2)
+	local now = computer.millis()
 
-	if registerTimer >= 30 then
+	if now - lastRegisterTime >= 30000 then
 		register()
-		registerTimer = 0
+		lastRegisterTime = now
 	end
 
-	if statusTimer >= 5 then
-		sendStatus()
-		if stationRole == "provider" then
-			statusTimer = 0
-		elseif statusTimer >= 60 then
-			statusTimer = 0
-		end
+	if stationRole == "provider" and now - lastStatusTime >= 15000 then
+		sendStatus(now)
+		lastStatusTime = now
+	elseif stationRole == "requester" and now - lastStatusTime >= 60000 then
+		sendStatus(now)
+		lastStatusTime = now
 	end
 end
