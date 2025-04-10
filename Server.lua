@@ -5,6 +5,7 @@ local trainDepo = {}
 local isBusy = {}
 local task = {}
 local clients = {}
+local trainAssignments = {}
 local stationAssignments = {}
 
 local trainEmptyCache = {}
@@ -12,8 +13,6 @@ local proxyCache = {}
 
 local net = computer.getPCIDevices(classes.NetworkCard)[1]
 if not net then error("No network card found") end
-
-computer.promote()
 
 net:open(port)
 event.listen(net)
@@ -284,7 +283,8 @@ function processTasks()
 		-- 🏭 Поиск поставщика с наибольшим количеством ресурса
 		local provider = nil
 		local maxAmount = -1
-		local providers = groupedProviders[t.resource:lower()] or {}
+		local key = t.resType .. ":" .. t.resource:lower()
+        local providers = groupedProviders[key] or {}
 		for _, entry in ipairs(providers) do
 			if entry and entry.station and entry.station.id ~= sid then
 				local amount = entry.available or 0
@@ -315,6 +315,7 @@ function processTasks()
 
 			stationAssignments[sid] = stationAssignments[sid] or {}
 			stationAssignments[sid][bestTrain.hash] = true
+            trainAssignments[bestTrain.hash] = sid
 
 			trainDepo[bestTrain.hash] = bestDepo
 			bestTrain:getTimeTable():setCurrentStop(0)
@@ -386,6 +387,18 @@ function releaseTrains()
 				tt:removeStop(0)
 				tt:setCurrentStop(index - 1)
 				isBusy[sid] = nil
+
+				-- 🗑️ Удаляем задачу, если покинутая станция была requester
+				if stations.requesters[sid] then
+					for i = #task, 1, -1 do
+						local t = task[i]
+						if t.assignedTrain == train.hash then
+							log("[TASK RELEASE] Удаляем задачу после выхода с requester: " .. train:getName())
+							table.remove(task, i)
+							break
+						end
+					end
+				end
 			end
 
 		-- 🛑 Завершение задачи в депо
@@ -398,11 +411,10 @@ function releaseTrains()
 				if isDepo and trainNearStation(train, stop.station, 100) then
 					log("[COMPLETE] Поезд " .. train:getName() .. " завершил задачу и прибыл в депо")
 
-					-- 🧹 Очистка статуса
 					isBusy[train.hash] = nil
 					isBusy[sid] = nil
+					trainEmptyCache[train.hash] = nil
 
-					-- 🚫 Удаление из stationAssignments
 					if stationAssignments[sid] then
 						stationAssignments[sid][train.hash] = nil
 						if next(stationAssignments[sid]) == nil then
@@ -410,7 +422,6 @@ function releaseTrains()
 						end
 					end
 
-					-- 🗑️ Удаление завершённой задачи
 					for i = #task, 1, -1 do
 						local t = task[i]
 						if t.assignedTrain == train.hash then
@@ -422,16 +433,16 @@ function releaseTrains()
 			end
 		end
 
-		-- 🔄 Подстраховка: удаляем поезд из всех stationAssignments
-		for sid, trainsSet in pairs(stationAssignments) do
-			if trainsSet[train.hash] then
-				trainsSet[train.hash] = nil
-				log("[CLEANUP] Удалён поезд " .. train:getName() .. " из stationAssignments станции " .. sid)
-				if next(trainsSet) == nil then
-					stationAssignments[sid] = nil
-				end
+		-- 🔄 Удаление через индекс trainAssignments
+		local sid = trainAssignments[train.hash]
+		if sid and stationAssignments[sid] then
+			stationAssignments[sid][train.hash] = nil
+			if next(stationAssignments[sid]) == nil then
+				stationAssignments[sid] = nil
 			end
+			log("[CLEANUP] Удалён поезд " .. train:getName() .. " из stationAssignments станции " .. sid)
 		end
+		trainAssignments[train.hash] = nil
 
 		::continue::
 	end
@@ -440,10 +451,10 @@ end
 local function rebuildGroupedProviders()
 	groupedProviders = {}
 	for id, entry in pairs(stations.providers) do
-		if entry and entry.resource then
-			local res = entry.resource:lower()
-			groupedProviders[res] = groupedProviders[res] or {}
-			table.insert(groupedProviders[res], entry)
+		if entry and entry.resource and entry.type then
+			local key = entry.type .. ":" .. entry.resource:lower()
+			groupedProviders[key] = groupedProviders[key] or {}
+			table.insert(groupedProviders[key], entry)
 		end
 	end
 end
@@ -484,9 +495,9 @@ function handleRegister(from, payload)
 		freeAmount = 0
 	}
 
-	if role == "provider" then
-		stations.providers[id] = entry
-		rebuildGroupedProviders()
+    if role == "provider" then
+        stations.providers[id] = entry
+        rebuildGroupedProviders()
 	elseif role == "requester" then
 		stations.requesters[id] = entry
 	elseif role == "depo" then
@@ -537,6 +548,7 @@ function handleStatusUpdate(from, payload)
 		entry.freeAmount = amount
 	elseif role == "provider" then
 		entry.available = amount
+        rebuildGroupedProviders()
 	end
 
 	entry.resource = resource
@@ -555,8 +567,13 @@ function handleStatusUpdate(from, payload)
 		local trainCapacity = (resType == "fluid" and 6400) or 128
 		local priority = entry.priority or 0
 
-		-- 🔁 Пропускаем, если статус не изменился (снижает лаги)
-		if entry.lastAmount == amount and entry.lastResType == resType then return end
+
+	-- 🔁 Пропускаем, если статус не изменился и станция не поставщик (снижает лаги)
+	if role ~= "provider"
+		and entry.lastAmount == amount
+		and entry.lastResType == resType then
+		return
+	end
 		entry.lastAmount = amount
 		entry.lastResType = resType
 
@@ -624,11 +641,10 @@ local updateTimer = 0
 local restoredTrains = false
 
 while true do
-	event.pull(0.2)
-
+	computer.promote()
 	local now = computer.millis()
 
-	local e, _, from, recvPort, cmd, payload = event.pull(0.5)
+	local e, _, from, recvPort, cmd, payload = event.pull(0.2)
 	if e == "NetworkMessage" and recvPort == port then
 		if cmd == "register" then handleRegister(from, payload) end
 		if cmd == "status" then handleStatusUpdate(from, payload) end
@@ -643,15 +659,6 @@ while true do
 		processTasks()
 		lastProcessTime = now
 	end
-	
-	--if now - lastRestoreTime >= restoreInterval then
-	--			if not restoredTrains then
-	--					restoreActiveTrains()
-	--				restoredTrains = true
-	--	end
-
-	--	lastRestoreTime = now
-	--end
 
 	if now - lastArrivalTime >= arrivalInterval then
 		trackArrivals()
