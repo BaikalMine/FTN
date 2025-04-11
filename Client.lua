@@ -20,7 +20,7 @@ assert(station, "❌ Станция по UUID не найдена")
 -- ⏱️ Время и кеш
 local lastRegisterTime = 0
 local lastStatusTime = 0
-local lastForceStatus = 0
+local lastForceTime = 0
 local cacheLifetime = 5000
 local lastInventoryTime = -cacheLifetime
 
