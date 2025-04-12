@@ -14,6 +14,55 @@ assert(net, "❌ No network card found")
 net:open(port)
 event.listen(net)
 
+-- 📺 Инициализация GPU и FINComputerScreen
+local gpu = computer.getPCIDevices(classes.GPU_T2_C)[1]
+if not gpu then error("❌ GPU не найден") end
+
+local screen = computer.getPCIDevices(classes.FINComputerScreen)[1]
+if not screen then error("❌ FINComputerScreen не найден") end
+
+gpu:bindScreen(screen)
+local screenSize = gpu:getScreenSize()
+
+-- 📐 Цвета и логика отрисовки
+local Vector2d = {}
+function Vector2d.new(x, y)
+	return { x = math.floor(x), y = math.floor(y) }
+end
+
+local Color = {
+	WHITE = { r = 1.0, g = 1.0, b = 1.0, a = 1.0 },
+	BLACK = { r = 0.0, g = 0.0, b = 0.0, a = 1.0 },
+}
+
+local logLines = {}
+local maxLogLines = 5
+
+local function getTimestamp()
+	local ms = computer.millis()
+	local sec = math.floor(ms / 1000)
+	local h = math.floor(sec / 3600) % 24
+	local m = math.floor(sec / 60) % 60
+	local s = sec % 60
+	return string.format("%02d:%02d:%02d", h, m, s)
+end
+
+local function redrawLogs()
+	gpu:drawRect(Vector2d.new(0, 0), screenSize, Color.BLACK, nil, 0)
+	for i, line in ipairs(logLines) do
+		gpu:drawText(Vector2d.new(10, (i - 1) * 30), line, 20, Color.WHITE, false)
+	end
+	gpu:flush()
+end
+
+function log(msg)
+	local timestamp = getTimestamp()
+	local line = timestamp .. " | " .. msg
+	table.insert(logLines, line)
+	if #logLines > maxLogLines then table.remove(logLines, 1) end
+	redrawLogs()
+end
+
 local station = component.proxy(STATION_UUID)
 assert(station, "❌ Станция по UUID не найдена")
 
@@ -184,21 +233,21 @@ local function sendStatus(now)
 	lastForceTime = now
 
 	if stationRole == "requester" then
-		print("📥 Запрос: может принять " .. amount .. (resType == "fluid" and " м³" or " стаков"))
+		log("📥 Запрос: может принять " .. amount .. (resType == "fluid" and " м³" or " стаков"))
 	elseif stationRole == "provider" then
-		print("📦 Поставка: доступно " .. amount .. (resType == "fluid" and " м³" or " стаков"))
+		log("📦 Поставка: доступно " .. amount .. (resType == "fluid" and " м³" or " стаков"))
 	end
 end
 
 -- 📬 Обработка входящих сообщений
 local function handleMessage(_, _, from, portNum, cmd, payload)
 	if cmd == "assignTrain" then
-		print("🚆 Назначен поезд: " .. payload)
+		log("🚆 Назначен поезд: " .. payload)
 	elseif cmd == "requestRegister" then
-		print("🔄 Сервер запросил повторную регистрацию")
+		log("🔄 Сервер запросил повторную регистрацию")
 	elseif cmd == "registerOK" and not firstRegistered then
 		local tag = (priority == 2 and "[CRITICAL] ") or (priority == 1 and "[HIGH] ") or ""
-		print("✅ " .. tag .. "Регистрация: " .. station.name .. " (" .. stationRole .. ")")
+		log("✅ " .. tag .. "Регистрация: " .. station.name .. " (" .. stationRole .. ")")
 		firstRegistered = true
 	end
 end
