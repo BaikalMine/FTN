@@ -14,6 +14,8 @@ local proxyCache = {}
 local net = computer.getPCIDevices(classes.NetworkCard)[1]
 if not net then error("No network card found") end
 
+computer.promote()
+
 net:open(port)
 event.listen(net)
 
@@ -156,13 +158,8 @@ function restoreActiveTrains(targetDepo)
 	if not targetDepo then return end
 
 	local name = targetDepo.name
-	--log("[RESTORE] 🔁 Поиск поезда для депо: " .. name)
-
 	local platforms = component.findComponent(classes.TrainPlatform)
-	if #platforms == 0 then
-		--log("[RESTORE] ❌ Нет платформ")
-		return
-	end
+	if #platforms == 0 then return end
 
 	local graph = component.proxy(platforms[1]):getTrackGraph()
 	local trainList = graph:getTrains()
@@ -171,16 +168,10 @@ function restoreActiveTrains(targetDepo)
 		local hash = train.hash
 		local trainName = train:getName()
 
-		if trains[hash] or isBusy[hash] then
-			--log("[RESTORE] ⚠️ Пропущен " .. trainName .. ": уже занят")
-			goto continue
-		end
+		if trains[hash] or isBusy[hash] then goto continue end
 
 		local tt = train:getTimeTable()
-		if not tt or tt.numStops == 0 then
-			--log("[RESTORE] ⚠️ Пропущен " .. trainName .. ": нет расписания")
-			goto continue
-		end
+		if not tt or tt.numStops == 0 then goto continue end
 
 		for i = 0, tt.numStops - 1 do
 			local stop = tt:getStop(i)
@@ -191,6 +182,38 @@ function restoreActiveTrains(targetDepo)
 				isBusy[targetDepo.id or targetDepo.hash] = train
 
 				log("[RESTORE] ✅ Восстановлен поезд " .. trainName .. " для депо " .. name)
+
+				-- 🔎 ищем requester в расписании
+				local requester = nil
+				for j = 0, tt.numStops - 1 do
+					local s = tt:getStop(j)
+					if s and s.station and stations.requesters[s.station.id or s.station.hash] then
+						requester = s.station
+						break
+					end
+				end
+
+				if requester then
+					local sid = requester.id or requester.hash
+					local entry = stations.requesters[sid]
+					if entry then
+						table.insert(task, {
+							station = requester,
+							clientAddress = "restored",
+							priority = entry.priority or 0,
+							resource = entry.resource or "-",
+							resType = entry.type or "item",
+							assignedTrain = hash,
+							waitLogged = true
+						})
+						stationAssignments[sid] = stationAssignments[sid] or {}
+						stationAssignments[sid][hash] = true
+						trainAssignments[hash] = sid
+
+						log("[TASK RESTORE] 🚂 Восстановлена задача для " .. requester.name .. " поездом " .. trainName)
+					end
+				end
+
 				return
 			end
 		end
@@ -641,7 +664,6 @@ local updateTimer = 0
 local restoredTrains = false
 
 while true do
-	computer.promote()
 	local now = computer.millis()
 
 	local e, _, from, recvPort, cmd, payload = event.pull(0.2)
