@@ -11,6 +11,7 @@ local resource = "Нефть"
 -- 📦 Компоненты
 local net = computer.getPCIDevices(classes.NetworkCard)[1]
 assert(net, "❌ No network card found")
+computer.promote()
 net:open(port)
 event.listen(net)
 
@@ -265,8 +266,7 @@ end
 -- ▶️ Запуск
 register()
 while true do
-	computer.promote()
-	event.pull(0.2)
+	event.pull(1)
 	local now = computer.millis()
 
 	if now - lastRegisterTime >= 30000 then
