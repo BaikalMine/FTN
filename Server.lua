@@ -158,13 +158,8 @@ function restoreActiveTrains(targetDepo)
 	if not targetDepo then return end
 
 	local name = targetDepo.name
-	--log("[RESTORE] 🔁 Поиск поезда для депо: " .. name)
-
 	local platforms = component.findComponent(classes.TrainPlatform)
-	if #platforms == 0 then
-		--log("[RESTORE] ❌ Нет платформ")
-		return
-	end
+	if #platforms == 0 then return end
 
 	local graph = component.proxy(platforms[1]):getTrackGraph()
 	local trainList = graph:getTrains()
@@ -173,16 +168,10 @@ function restoreActiveTrains(targetDepo)
 		local hash = train.hash
 		local trainName = train:getName()
 
-		if trains[hash] or isBusy[hash] then
-			--log("[RESTORE] ⚠️ Пропущен " .. trainName .. ": уже занят")
-			goto continue
-		end
+		if trains[hash] or isBusy[hash] then goto continue end
 
 		local tt = train:getTimeTable()
-		if not tt or tt.numStops == 0 then
-			--log("[RESTORE] ⚠️ Пропущен " .. trainName .. ": нет расписания")
-			goto continue
-		end
+		if not tt or tt.numStops == 0 then goto continue end
 
 		for i = 0, tt.numStops - 1 do
 			local stop = tt:getStop(i)
@@ -193,6 +182,38 @@ function restoreActiveTrains(targetDepo)
 				isBusy[targetDepo.id or targetDepo.hash] = train
 
 				log("[RESTORE] ✅ Восстановлен поезд " .. trainName .. " для депо " .. name)
+
+				-- 🔎 ищем requester в расписании
+				local requester = nil
+				for j = 0, tt.numStops - 1 do
+					local s = tt:getStop(j)
+					if s and s.station and stations.requesters[s.station.id or s.station.hash] then
+						requester = s.station
+						break
+					end
+				end
+
+				if requester then
+					local sid = requester.id or requester.hash
+					local entry = stations.requesters[sid]
+					if entry then
+						table.insert(task, {
+							station = requester,
+							clientAddress = "restored",
+							priority = entry.priority or 0,
+							resource = entry.resource or "-",
+							resType = entry.type or "item",
+							assignedTrain = hash,
+							waitLogged = true
+						})
+						stationAssignments[sid] = stationAssignments[sid] or {}
+						stationAssignments[sid][hash] = true
+						trainAssignments[hash] = sid
+
+						log("[TASK RESTORE] 🚂 Восстановлена задача для " .. requester.name .. " поездом " .. trainName)
+					end
+				end
+
 				return
 			end
 		end
@@ -218,132 +239,116 @@ function trainNearStation(train, station, maxDist)
 end
 
 function processTasks()
-	-- 📦 Сбор всех свободных поездов, реально стоящих в депо
 	local availableTrains = {}
 	for hash, train in pairs(trains) do
-		if not isBusy[hash] and trainIsEmpty(train) then
-			local tt = train:getTimeTable()
-			if tt and tt.numStops == 1 then
-				local stop = tt:getStop(0)
-				if stop and stop.station then
-					local depoEntry = stations.depos[stop.station.id]
-					local depo = (type(depoEntry) == "table" and depoEntry.station) or depoEntry
-					if depo and trainNearStation(train, depo, 100) then
-						table.insert(availableTrains, {
-							hash = hash,
-							train = train,
-							depo = depo,
-							pos = stop.station.location
-						})
+		if isBusy[hash] then goto continue end
+		if not trainIsEmpty(train) then goto continue end
+
+		local tt = train:getTimeTable()
+		if not tt then goto continue end
+
+		local stop = tt:getStop(0)
+		if not stop or not stop.station then goto continue end
+		if not stop.station.location then goto continue end
+
+		local station = stop.station
+		local matchedId = nil
+		for id, entry in pairs(stations.depos) do
+			if entry == station or (type(entry) == "table" and entry.station == station) then
+				matchedId = id
+				break
+			end
+		end
+		if not matchedId then goto continue end
+		if not trainNearStation(train, station, 100) then goto continue end
+
+		table.insert(availableTrains, {
+			hash = hash,
+			train = train,
+			depo = station,
+			pos = station.location
+		})
+
+		::continue::
+	end
+
+	for i = #task, 1, -1 do
+		local t = task[i]
+		if t.assignedTrain or not t.station then goto next_task end
+
+		local matchedId = nil
+		for id, entry in pairs(stations.requesters) do
+			if entry.station == t.station or entry == t.station then
+				matchedId = id
+				break
+			end
+		end
+		if not matchedId then goto next_task end
+
+		local active = 0
+		if stationAssignments[matchedId] then
+			for _ in pairs(stationAssignments[matchedId]) do active = active + 1 end
+		end
+		local maxTasks = (t.priority == 2 and 3) or (t.priority == 1 and 2) or 1
+		if active >= maxTasks then t.waitLogged = true goto next_task end
+
+		local key = t.resType .. ":" .. t.resource:lower()
+		local providers = groupedProviders[key] or {}
+		local bestProvider, maxAmount = nil, -1
+		for _, entry in ipairs(providers) do
+			if entry and entry.station then
+				local amount = tonumber(entry.available)
+				if type(amount) == "number" then
+					local enoughRes = (t.resType == "fluid" and amount >= 6400)
+					              or (t.resType == "item" and amount >= 128)
+					local ignoreLimit = t.priority > 0
+					if (ignoreLimit or enoughRes) and amount > maxAmount then
+						bestProvider = entry.station
+						maxAmount = amount
 					end
 				end
 			end
 		end
-	end
+		if not bestProvider then goto next_task end
 
-	-- 🔁 Обработка задач
-	for i = #task, 1, -1 do
-		local t = task[i]
-		if t.assignedTrain then goto continue end
-
-		local sid = t.station.id
-		local stEntry = stations.requesters[sid]
-		if not stEntry or not stEntry.freeAmount then
-			log("[SKIP] Нет данных о станции " .. t.station.name .. ", задача пропущена")
-			goto continue
-		end
-
-		-- 🔢 Сколько уже назначено поездов для станции
-		local active = 0
-		if stationAssignments[sid] then
-			for _ in pairs(stationAssignments[sid]) do
-				active = active + 1
-			end
-		end
-
-		local maxTasks = (t.priority == 2 and 3) or (t.priority == 1 and 2) or 1
-		if active >= maxTasks then
-			if not t.waitLogged then
-				log("[WAIT] Превышен лимит поездов для станции " .. t.station.name)
-				t.waitLogged = true
-			end
-			goto continue
-		end
-
-		-- 🚂 Поиск ближайшего поезда
-		local bestTrainIndex, bestTrain, bestDepo, bestDist
+		local bestTrain, bestTrainIndex, bestDist = nil, nil, nil
 		for idx, entry in ipairs(availableTrains) do
-			local d = distSqr(t.station.location, entry.pos)
-			if not bestDist or d < bestDist then
-				bestTrainIndex = idx
+			local dx = entry.pos.x - t.station.location.x
+			local dy = entry.pos.y - t.station.location.y
+			local dz = entry.pos.z - t.station.location.z
+			local dist = dx * dx + dy * dy + dz * dz
+			if not bestDist or dist < bestDist then
 				bestTrain = entry.train
-				bestDepo = entry.depo
-				bestDist = d
+				bestTrainIndex = idx
+				bestDist = dist
 			end
 		end
+		if not bestTrain then goto next_task end
 
-		-- 🏭 Поиск поставщика с наибольшим количеством ресурса
-		local provider = nil
-		local maxAmount = -1
-		local key = t.resType .. ":" .. t.resource:lower()
-        local providers = groupedProviders[key] or {}
-		for _, entry in ipairs(providers) do
-			if entry and entry.station and entry.station.id ~= sid then
-				local amount = entry.available or 0
-				local enoughRes = (t.resType == "fluid" and amount >= 6400)
-				              or (t.resType == "item" and amount >= 128)
-				local ignoreLimit = t.priority > 0
-				if (ignoreLimit or enoughRes) and amount > maxAmount then
-					provider = entry.station
-					maxAmount = amount
-				end
-			end
-		end
+		local depo = availableTrains[bestTrainIndex].depo
+		local tt = bestTrain:getTimeTable()
+		if not tt then goto next_task end
 
-		-- ✅ Назначаем поезд
-		if bestTrain and bestDepo and provider then
-			table.remove(availableTrains, bestTrainIndex)
+		while tt.numStops > 0 do tt:removeStop(0) end
+		tt:setCurrentStop(0)
+		tt:addStop(0, bestProvider, { definition = 0, duration = 15, isDurationAndRule = false })
+		tt:addStop(1, t.station,    { definition = 1, duration = 15, isDurationAndRule = true  })
+		tt:addStop(2, depo,         { definition = 0, duration = 15, isDurationAndRule = false })
 
-			clearTimeTable(bestTrain)
-			local idx = 0
-			addStop(bestTrain, provider, idx, 0, 15, false)
-			idx = idx + 1
-			addStop(bestTrain, t.station, idx, 1, 15, true)
-			idx = idx + 1
-			addStop(bestTrain, bestDepo, idx, 0, 15, false)
+		isBusy[bestTrain.hash] = true
+		isBusy[depo] = bestTrain
+		stationAssignments[matchedId] = stationAssignments[matchedId] or {}
+		stationAssignments[matchedId][bestTrain.hash] = true
+		trainAssignments[bestTrain.hash] = matchedId
+		t.assignedTrain = bestTrain.hash
 
-			isBusy[bestTrain.hash] = t.station
-			isBusy[bestDepo.id] = bestTrain
+		table.remove(availableTrains, bestTrainIndex)
 
-			stationAssignments[sid] = stationAssignments[sid] or {}
-			stationAssignments[sid][bestTrain.hash] = true
-            trainAssignments[bestTrain.hash] = sid
+		local tag = (t.priority == 2 and "[CRITICAL] ") or (t.priority == 1 and "[HIGH] ") or ""
+		log("[TASK] " .. tag .. "Назначен поезд " .. bestTrain:getName() ..
+			": " .. bestProvider.name .. " → " .. t.station.name .. " → " .. depo.name)
 
-			trainDepo[bestTrain.hash] = bestDepo
-			bestTrain:getTimeTable():setCurrentStop(0)
-
-			t.assignedTrain = bestTrain.hash
-			t.recentlyCreated = nil
-			t.waitLogged = nil
-
-			local tag = (t.priority == 2 and "[CRITICAL] ") or (t.priority == 1 and "[HIGH] ") or ""
-			log("[TASK] " .. tag .. "Назначен поезд " .. bestTrain:getName() ..
-				": " .. provider.name .. " → " .. t.station.name .. " → " .. bestDepo.name)
-			--log("[DEBUG] Назначена задача: " .. t.station.name .. ", assignedTrain: " .. tostring(t.assignedTrain))
-			net:send(t.clientAddress, port, "assignTrain", bestTrain:getName())
-		else
-			if not t.waitLogged then
-				local reasons = {}
-				if not bestTrain then table.insert(reasons, "поезд") end
-				if not provider then table.insert(reasons, "поставщик") end
-				if not bestDepo then table.insert(reasons, "депо") end
-				log("[WAIT] Не назначен поезд для задачи на " .. t.station.name ..
-					" — отсутствует: " .. table.concat(reasons, ", "))
-				t.waitLogged = true
-			end
-		end
-
-		::continue::
+		::next_task::
 	end
 end
 
