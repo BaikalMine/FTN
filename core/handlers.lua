@@ -27,7 +27,7 @@ function HandleRegister(from, payload)
 		return
 	end
 
-	local proxyStation = getStationByID(id)
+	local proxyStation = GetStationByID(id)
 	if not proxyStation then
 		log("[ERROR] Не удалось получить station по ID: " .. id)
 		net:send(from, port, "requestRegister", "")
@@ -89,21 +89,23 @@ function HandleStatusUpdate(from, payload)
 	end
 
 	if not entry then
-		log("[WARN] Статус от неизвестной станции: " .. tostring(id))
+		log("[WARN] ❓ Статус от неизвестной станции: " .. tostring(id))
 		net:send(from, port, "requestRegister", "")
 		return
 	end
 
+	-- 💾 Сохраняем новое состояние станции
 	if role == "requester" then
 		entry.freeAmount = amount
 	elseif role == "provider" then
 		entry.available = amount
-		RebuildGroupedProviders()
+        RebuildGroupedProviders()
 	end
 
 	entry.resource = resource
 	entry.type = resType
 
+	-- 🔁 Обновляем тип ресурса в уже созданных задачах
 	for _, t in ipairs(task) do
 		if t.station.id == id then
 			t.resType = resType
@@ -111,58 +113,64 @@ function HandleStatusUpdate(from, payload)
 		end
 	end
 
+	-- 📦 Создание задач — только для requester
+	if role == "requester" then
+		local trainCapacity = (resType == "fluid" and 6400) or 128
+		local priority = entry.priority or 0
+
+
+	-- 🔁 Пропускаем, если статус не изменился и станция не поставщик (снижает лаги)
 	if role ~= "provider"
 		and entry.lastAmount == amount
 		and entry.lastResType == resType then
 		return
 	end
-	entry.lastAmount = amount
-	entry.lastResType = resType
+		entry.lastAmount = amount
+		entry.lastResType = resType
 
-	local assignedTasks = 0
-	for _, t in ipairs(task) do
-		if t.station.id == id then
-			assignedTasks = assignedTasks + 1
-		end
+		-- 📊 Считаем все активные задачи для станции
+local assignedTasks = 0
+for _, t in ipairs(task) do
+	if t.station.id == id then
+		assignedTasks = assignedTasks + 1
 	end
+end
 
-	local priority = entry.priority or 0
-	local maxTasks = (priority == 2 and 3) or (priority == 1 and 2) or 1
-	local neededTasks = 0
+local maxTasks = (priority == 2 and 3) or (priority == 1 and 2) or 1
+local neededTasks = 0
 
-	local trainCapacity = (resType == "fluid" and 6400) or 128
+log(("[STATUS] %s (%s): %s, свободно: %.2f, приоритет: %d, уже назначено: %d"):format(
+	entry.station.name, role, resType, entry.freeAmount or 0, priority, assignedTasks
+))
 
-	log(("[STATUS] %s (%s): %s %s, свободно: %.2f, приоритет: %d, уже назначено: %d"):format(
-		entry.station.name, role, amount, resType, entry.freeAmount or 0, priority, assignedTasks
-	))
-
-	if priority > 0 then
-		local fullTrains = math.floor(amount / trainCapacity)
-		if fullTrains == 0 then
-			neededTasks = 1
-		else
-			neededTasks = maxTasks
-		end
+if priority > 0 then
+	local fullTrains = math.floor(amount / trainCapacity)
+	if fullTrains == 0 then
+		neededTasks = 1
 	else
-		if amount >= trainCapacity then
-			neededTasks = 1
-		end
+		neededTasks = maxTasks
 	end
+else
+	if amount >= trainCapacity then
+		neededTasks = 1
+	end
+end
 
-	local toCreate = neededTasks - assignedTasks
+local toCreate = neededTasks - assignedTasks
 
-	if toCreate > 0 then
-		log(("[TASK CREATE] Станция %s: создано %d задач (нужно %d, уже %d)"):format(
-			entry.station.name, toCreate, neededTasks, assignedTasks
-		))
-		for i = 1, toCreate do
-			table.insert(task, {
-				station = entry.station,
-				clientAddress = from,
-				priority = priority,
-				resource = resource,
-				resType = resType
-			})
-		end
+if toCreate > 0 then
+	log(("[TASK CREATE] Станция %s: создано %d задач (нужно %d, уже %d)"):format(
+		entry.station.name, toCreate, neededTasks, assignedTasks
+	))
+	for i = 1, toCreate do
+		table.insert(task, {
+			station = entry.station,
+			clientAddress = from,
+			priority = priority,
+			resource = resource,
+			resType = resType
+		})
+	end
+end
 	end
 end
