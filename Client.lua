@@ -8,11 +8,13 @@ local priority = nil
 local requestAmount = nil
 local resource = "Нефть"
 
+local promote = false
+
 -- Компоненты
 local net = computer.getPCIDevices(classes.NetworkCard)[1]
 assert(net, "No network card found")
 
-if stationRole ~= "depo" then
+if promote and stationRole ~= "depo" then
 	computer.promote()
 end
 
