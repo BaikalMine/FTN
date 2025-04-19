@@ -257,22 +257,17 @@ local function handleMessage(_, _, from, portNum, cmd, payload)
 	end
 end
 
--- Обработка событий
-local originalPull = event.pull
-function event.pull(timeout)
-	local args = {originalPull(timeout)}
-	if args[1] == "NetworkMessage" and args[4] == port then
-		handleMessage(table.unpack(args))
-	end
-	return table.unpack(args)
-end
-
 -- Запуск
 register()
 while true do
-	event.pull(1)
 	local now = computer.millis()
 
+	local e, _, from, portNum, cmd, payload = event.pull(1)
+
+	if e == "NetworkMessage" and portNum == port then
+		handleMessage(_, _, from, portNum, cmd, payload)
+	end
+	
 	if now - lastRegisterTime >= 30000 then
 		register()
 		lastRegisterTime = now
@@ -285,4 +280,7 @@ while true do
 		sendStatus(now)
 		lastStatusTime = now
 	end
+	    if not e then
+        computer.skip()
+    end
 end
