@@ -1,6 +1,6 @@
--- 🚉 FTN Client: стабильная версия с поддержкой учёта стаков и умной отправкой статуса
+-- FTN Client: стабильная версия с поддержкой учёта стаков и умной отправкой статуса
 
--- 🔧 Конфигурация
+-- Конфигурация
 local STATION_UUID = ""
 local stationRole = "requester" -- "provider", "requester", "depo"
 local port = 99
@@ -8,9 +8,9 @@ local priority = nil
 local requestAmount = nil
 local resource = "Нефть"
 
--- 📦 Компоненты
+-- Компоненты
 local net = computer.getPCIDevices(classes.NetworkCard)[1]
-assert(net, "❌ No network card found")
+assert(net, "No network card found")
 
 if stationRole ~= "depo" then
 	computer.promote()
@@ -19,17 +19,17 @@ end
 net:open(port)
 event.listen(net)
 
--- 📺 Инициализация GPU и FINComputerScreen
+-- Инициализация GPU и FINComputerScreen
 local gpu = computer.getPCIDevices(classes.GPU_T2_C)[1]
-if not gpu then error("❌ GPU не найден") end
+if not gpu then error("GPU не найден") end
 
 local screen = computer.getPCIDevices(classes.FINComputerScreen)[1]
-if not screen then error("❌ FINComputerScreen не найден") end
+if not screen then error("FINComputerScreen не найден") end
 
 gpu:bindScreen(screen)
 local screenSize = gpu:getScreenSize()
 
--- 📐 Цвета и логика отрисовки
+-- Цвета и логика отрисовки
 local Vector2d = {}
 function Vector2d.new(x, y)
 	return { x = math.floor(x), y = math.floor(y) }
@@ -69,23 +69,23 @@ function log(msg)
 end
 
 local station = component.proxy(STATION_UUID)
-assert(station, "❌ Станция по UUID не найдена")
+assert(station, "Станция по UUID не найдена")
 
--- ⏱️ Время и кеш
+-- Время и кеш
 local lastRegisterTime = 0
 local lastStatusTime = 0
 local lastForceTime = 0
 local cacheLifetime = 5000
 local lastInventoryTime = -cacheLifetime
 
--- 📦 Прочие переменные
+-- Прочие переменные
 local firstRegistered = false
 local cachedPlatforms = nil
 local inventoryCache = {}
 local itemCountCache = {}
 local lastStatus = {}
 
--- 📦 Получаем платформы (1 раз)
+-- Получаем платформы (1 раз)
 local function getStationPlatforms()
 	if not cachedPlatforms then
 		cachedPlatforms = {}
@@ -97,7 +97,7 @@ local function getStationPlatforms()
 	return cachedPlatforms
 end
 
--- 🔎 Определяем тип ресурса
+-- Определяем тип ресурса
 local resType = "item"
 do
 	local platforms = getStationPlatforms()
@@ -109,7 +109,7 @@ do
 	end
 end
 
--- 📦 Подсчёт количества стаков ресурса с кешем и проверкой itemCount
+-- Подсчёт количества стаков ресурса с кешем и проверкой itemCount
 local function countStacks(resourceName, now, platforms)
 	local totalStacks = 0
 	if now - lastInventoryTime > cacheLifetime then
@@ -160,7 +160,7 @@ local function countStacks(resourceName, now, platforms)
 	return totalStacks
 end
 
--- 📐 Получаем свободное место
+-- Получаем свободное место
 local function getFree(resourceName, now, platforms)
 	local capacityPer = resType == "fluid" and 2400 or 48
 	local totalCapacity = #platforms * capacityPer
@@ -168,7 +168,7 @@ local function getFree(resourceName, now, platforms)
 	return totalCapacity - currentAmount, currentAmount
 end
 
--- 📨 Регистрация станции
+-- Регистрация станции
 local function register()
 	local id, name, loc = station.id, station.name, station.location
 	local payload = table.concat({
@@ -186,7 +186,7 @@ local function register()
 	net:broadcast(port, "register", payload)
 end
 
--- 📤 Отправка статуса
+-- Отправка статуса
 local function sendStatus(now)
 	if stationRole == "depo" then return end
 
@@ -238,26 +238,26 @@ local function sendStatus(now)
 	lastForceTime = now
 
 	if stationRole == "requester" then
-		log("📥 Запрос: может принять " .. amount .. (resType == "fluid" and " м³" or " стаков"))
+		log("Запрос: может принять " .. amount .. (resType == "fluid" and " м³" or " стаков"))
 	elseif stationRole == "provider" then
-		log("📦 Поставка: доступно " .. amount .. (resType == "fluid" and " м³" or " стаков"))
+		log("Поставка: доступно " .. amount .. (resType == "fluid" and " м³" or " стаков"))
 	end
 end
 
--- 📬 Обработка входящих сообщений
+-- Обработка входящих сообщений
 local function handleMessage(_, _, from, portNum, cmd, payload)
 	if cmd == "assignTrain" then
-		log("🚆 Назначен поезд: " .. payload)
+		log("Назначен поезд: " .. payload)
 	elseif cmd == "requestRegister" then
-		log("🔄 Сервер запросил повторную регистрацию")
+		log("Сервер запросил повторную регистрацию")
 	elseif cmd == "registerOK" and not firstRegistered then
 		local tag = (priority == 2 and "[CRITICAL] ") or (priority == 1 and "[HIGH] ") or ""
-		log("✅ " .. tag .. "Регистрация: " .. station.name .. " (" .. stationRole .. ")")
+		log("" .. tag .. "Регистрация: " .. station.name .. " (" .. stationRole .. ")")
 		firstRegistered = true
 	end
 end
 
--- 🎧 Обработка событий
+-- Обработка событий
 local originalPull = event.pull
 function event.pull(timeout)
 	local args = {originalPull(timeout)}
@@ -267,7 +267,7 @@ function event.pull(timeout)
 	return table.unpack(args)
 end
 
--- ▶️ Запуск
+-- Запуск
 register()
 while true do
 	event.pull(1)
