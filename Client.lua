@@ -11,7 +11,11 @@ local resource = "Нефть"
 -- 📦 Компоненты
 local net = computer.getPCIDevices(classes.NetworkCard)[1]
 assert(net, "❌ No network card found")
-computer.promote()
+
+if stationRole ~= "depo" then
+	computer.promote()
+end
+
 net:open(port)
 event.listen(net)
 
