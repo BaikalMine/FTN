@@ -282,7 +282,4 @@ while true do
 		sendStatus(now)
 		lastStatusTime = now
 	end
-	    if not e then
-        computer.skip()
-    end
 end
