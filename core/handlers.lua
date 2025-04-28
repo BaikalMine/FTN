@@ -94,6 +94,14 @@ function HandleStatusUpdate(from, payload)
 		return
 	end
 
+	local newHash = amount .. "|" .. resource .. "|" .. resType
+
+	if entry.lastStatusHash == newHash then
+		return
+	end
+
+	entry.lastStatusHash = newHash
+
 	if role == "requester" then
 		entry.freeAmount = amount
 	elseif role == "provider" then
@@ -104,65 +112,56 @@ function HandleStatusUpdate(from, payload)
 	entry.resource = resource
 	entry.type = resType
 
-	for _, t in ipairs(task) do
-		if t.station.id == id then
-			t.resType = resType
-			break
+	if role == "requester" then
+		for _, t in ipairs(task) do
+			if t.station.id == id then
+				t.resType = resType
+				break
+			end
 		end
-	end
 
-	if role ~= "provider"
-		and entry.lastAmount == amount
-		and entry.lastResType == resType then
-		return
-	end
-	entry.lastAmount = amount
-	entry.lastResType = resType
+		local trainCapacity = GetTrainCapacity(resType)
+		local priority = entry.priority or 0
 
-	local assignedTasks = 0
-	for _, t in ipairs(task) do
-		if t.station.id == id then
-			assignedTasks = assignedTasks + 1
+		local assignedTasks = 0
+		if stationAssignments[id] then
+			for _ in pairs(stationAssignments[id]) do assignedTasks = assignedTasks + 1 end
 		end
-	end
 
-	local priority = entry.priority or 0
-	local maxTasks = (priority == 2 and 3) or (priority == 1 and 2) or 1
-	local neededTasks = 0
+		local maxTasks = (priority == 2 and 3) or (priority == 1 and 2) or 1
+		local neededTasks = 0
 
-	local trainCapacity = (resType == "fluid" and 6400) or 128
+		log(string.format("[STATUS] %s (%s): %s %s, свободно: %.2f, приоритет: %d, назначено: %d",
+			entry.station.name, role, amount, resType, entry.freeAmount or 0, priority, assignedTasks))
 
-	log(("[STATUS] %s (%s): %s %s, свободно: %.2f, приоритет: %d, уже назначено: %d"):format(
-		entry.station.name, role, amount, resType, entry.freeAmount or 0, priority, assignedTasks
-	))
-
-	if priority > 0 then
-		local fullTrains = math.floor(amount / trainCapacity)
-		if fullTrains == 0 then
-			neededTasks = 1
+		if priority > 0 then
+			local fullTrains = math.floor(amount / trainCapacity)
+			if fullTrains == 0 then
+				neededTasks = 1
+			else
+				neededTasks = maxTasks
+			end
 		else
-			neededTasks = maxTasks
+			if amount >= trainCapacity then
+				neededTasks = 1
+			end
 		end
-	else
-		if amount >= trainCapacity then
-			neededTasks = 1
-		end
-	end
 
-	local toCreate = neededTasks - assignedTasks
+		local toCreate = neededTasks - assignedTasks
 
-	if toCreate > 0 then
-		log(("[TASK CREATE] Станция %s: создано %d задач (нужно %d, уже %d)"):format(
-			entry.station.name, toCreate, neededTasks, assignedTasks
-		))
-		for i = 1, toCreate do
-			table.insert(task, {
-				station = entry.station,
-				clientAddress = from,
-				priority = priority,
-				resource = resource,
-				resType = resType
-			})
+		if toCreate > 0 then
+			log(string.format("[TASK CREATE] Станция %s: создано %d задач (нужно %d, уже %d)",
+				entry.station.name, toCreate, neededTasks, assignedTasks))
+
+			for i = 1, toCreate do
+				table.insert(task, {
+					station = entry.station,
+					clientAddress = from,
+					priority = priority,
+					resource = resource,
+					resType = resType
+				})
+			end
 		end
 	end
 end

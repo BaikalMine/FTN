@@ -9,8 +9,10 @@ function TrackArrivals()
 					if index >= 0 and index < tt.numStops then
 						local stop = tt:getStop(index)
 						if stop and stop.station and not isBusy[stop.station.id] then
-							log("[ARRIVAL] Поезд " .. train:getName() .. " прибыл на " .. stop.station.name)
-							isBusy[stop.station.id] = train
+							if TrainNearStation(train, stop.station, 100) then
+								log("[ARRIVAL] Поезд " .. train:getName() .. " прибыл на станцию " .. stop.station.name)
+								isBusy[stop.station.id] = train
+							end
 						end
 					end
 				end
@@ -33,7 +35,7 @@ function ReleaseTrains()
 
 		if index > 0 and tt.numStops > 1 then
 			local prevStop = tt:getStop(0)
-			if prevStop and prevStop.station then
+			if prevStop and prevStop.station and TrainNearStation(train, prevStop.station, 100) then
 				local sid = prevStop.station.id or prevStop.station.hash
 				log("[MOVE] Поезд " .. train:getName() .. " покидает станцию " .. prevStop.station.name)
 				tt:removeStop(0)
@@ -45,19 +47,26 @@ function ReleaseTrains()
 						local t = task[i]
 						if t.assignedTrain == train.hash then
 							log("[TASK RELEASE] Удаляем задачу после выхода с requester: " .. train:getName())
+							if t.providerStation then
+								local providerEntry = stations.providers[t.providerStation.id]
+								if providerEntry then
+									providerEntry.assignedTrains = math.max(0, (providerEntry.assignedTrains or 1) - 1)
+								end
+							end
 							table.remove(task, i)
 							break
 						end
 					end
 				end
 			end
+
 		elseif tt.numStops == 1 then
 			local stop = tt:getStop(0)
-			if stop and stop.station then
+			if stop and stop.station and TrainNearStation(train, stop.station, 100) then
 				local sid = stop.station.id or stop.station.hash
 				local isDepo = stations.depos[sid] ~= nil
 
-				if isDepo and TrainNearStation(train, stop.station, 100) then
+				if isDepo then
 					log("[COMPLETE] Поезд " .. train:getName() .. " завершил задачу и прибыл в депо")
 
 					isBusy[train.hash] = nil
@@ -75,21 +84,33 @@ function ReleaseTrains()
 						local t = task[i]
 						if t.assignedTrain == train.hash then
 							log("[TASK FINALIZE] Удаляем задачу, выполненную поездом " .. train:getName())
+							if t.providerStation then
+								local providerEntry = stations.providers[t.providerStation.id]
+								if providerEntry then
+									providerEntry.assignedTrains = math.max(0, (providerEntry.assignedTrains or 1) - 1)
+								end
+							end
 							table.remove(task, i)
+							break
 						end
 					end
 				end
 			end
 		end
 
-		local sid = trainAssignments[train.hash]
-		if sid and stationAssignments[sid] then
-			stationAssignments[sid][train.hash] = nil
-			if next(stationAssignments[sid]) == nil then
-				stationAssignments[sid] = nil
+		-- Освобождаем поезд через кэш
+		local sid = stationAssignmentsByTrain[train.hash]
+		if sid then
+			if stationAssignments[sid] then
+				stationAssignments[sid][train.hash] = nil
+				if next(stationAssignments[sid]) == nil then
+					stationAssignments[sid] = nil
+				end
 			end
+			stationAssignmentsByTrain[train.hash] = nil
 			log("[CLEANUP] Удалён поезд " .. train:getName() .. " из stationAssignments станции " .. sid)
 		end
+
 		trainAssignments[train.hash] = nil
 
 		::continue::

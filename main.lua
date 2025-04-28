@@ -7,6 +7,7 @@ fs.doFile("/util/color.lua")
 fs.doFile("/core/net.lua")
 fs.doFile("/core/log.lua")
 fs.doFile("/core/train.lua")
+fs.doFile("/core/train_capacity.lua")
 fs.doFile("/core/tasks.lua")
 fs.doFile("/core/handlers.lua")
 fs.doFile("/core/state.lua")
@@ -29,6 +30,7 @@ task = {}
 clients = {}
 trainAssignments = {}
 stationAssignments = {}
+stationAssignmentsByTrain = {}
 
 lastUpdateTime = 0
 lastProcessTime = 0
@@ -52,5 +54,5 @@ while true do
     if now - lastUpdateTime >= updateInterval then UpdateTrainNetwork(); lastUpdateTime = now end
     if now - lastProcessTime >= processInterval then ProcessTasks(); lastProcessTime = now end
     if now - lastArrivalTime >= arrivalInterval then TrackArrivals(); lastArrivalTime = now end
-    if now - lastReleaseTime >= releaseInterval then ReleaseTrains(); resetTrainEmptyCache(); lastReleaseTime = now end
+    if now - lastReleaseTime >= releaseInterval then ReleaseTrains(); ResetTrainEmptyCache(); lastReleaseTime = now end
 end
