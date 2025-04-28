@@ -10,6 +10,15 @@ function GetStationByID(id)
 	return nil
 end
 
+function GetDepoByStation(station)
+	for id, depo in pairs(stations.depos) do
+		if depo == station or (type(depo) == "table" and depo.station == station) then
+			return id
+		end
+	end
+	return nil
+end
+
 function HandleRegister(from, payload)
 	local role, id, name, x, y, z, amount, priority, resource =
 		payload:match("([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)|([^|]+)")
