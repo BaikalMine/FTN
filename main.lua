@@ -1,7 +1,7 @@
 fs = filesystem;
 fs.initFileSystem("/dev");
 
-fs.mount("/dev/{DISK_ID}/","/")
+fs.mount("/dev/B7CF43F341A860DB27E5E4A9A199D101/","/")
 fs.doFile("/util/vector.lua")
 fs.doFile("/util/color.lua")
 fs.doFile("/core/net.lua")

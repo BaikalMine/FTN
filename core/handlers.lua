@@ -27,7 +27,7 @@ function HandleRegister(from, payload)
 		return
 	end
 
-	local proxyStation = getStationByID(id)
+	local proxyStation = GetStationByID(id)
 	if not proxyStation then
 		log("[ERROR] Не удалось получить station по ID: " .. id)
 		net:send(from, port, "requestRegister", "")
