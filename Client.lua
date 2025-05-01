@@ -217,7 +217,7 @@ register()
 while true do
 	local now = computer.millis()
 
-	local e, _, from, portNum, cmd, payload = event.pull(1)
+	local e, _, from, portNum, cmd, payload = event.pull(0.1)
 
 	if e == "NetworkMessage" and portNum == port then
 		handleMessage(_, _, from, portNum, cmd, payload)
